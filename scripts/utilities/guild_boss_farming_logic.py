@@ -82,9 +82,28 @@ class GuildBossFarmer(IFarmer):
             IFarmer.dailies_thread = None
             self.current_state = States.GOING_TO_GB
 
+    def _resumed_fight(self, screenshot) -> bool:
+        """After a reconnect the game can put us back in the fight: keep fighting instead of looking for the boss."""
+        if find(vio.demons_auto, screenshot, threshold=0.8) or find(vio.fb_aut_off, screenshot, threshold=0.8):
+            print("We're still in the fight, let's keep fighting!")
+            self.current_state = States.FIGHTING
+            return True
+        return False
+
+    def login_screen_state(self, initial_state):
+        """Logging back in can drop us straight into the resumed fight, without showing the tavern."""
+        screenshot, _ = capture_window()
+        if not IFarmer.doing_dailies and self._resumed_fight(screenshot):
+            IFarmer.first_login = False
+            return
+        super().login_screen_state(initial_state)
+
     def going_to_gb_state(self):
         self._reset_result_tracking()
         screenshot, window_location = capture_window()
+
+        if self._resumed_fight(screenshot):
+            return
 
         if find(vio.kh_rank, screenshot):
             self.current_state = States.FINDING_BOSS
@@ -98,6 +117,10 @@ class GuildBossFarmer(IFarmer):
     def finding_boss_state(self):
         self._reset_result_tracking()
         screenshot, window_location = capture_window()
+
+        # On the boss list, fighting_state would send us right back here: never treat it as a fight
+        if not find(vio.belgius_hel, screenshot, threshold=0.8) and self._resumed_fight(screenshot):
+            return
 
         if find(vio.startbutton, screenshot):
             self.current_state = States.FIGHTING

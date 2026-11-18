@@ -12,11 +12,19 @@ from utilities.reward_sets import RewardSet
 class RewardTracker:
     """Keep the best reading until a clear is counted, retrying unclear result screens."""
 
-    def __init__(self, reward_set: RewardSet, logger: LoggerWrapper, watch_seconds: float = 5):
+    def __init__(
+        self,
+        reward_set: RewardSet,
+        logger: LoggerWrapper,
+        watch_seconds: float = 5,
+        settle_seconds: float = 1.5,
+    ):
         self._set = reward_set
         self._reader: RewardReader | None = None
         self._logger = logger
         self._watch_seconds = watch_seconds
+        # Reward tiles appear one after another: keep reading this long after the first tile shows up
+        self._settle_seconds = settle_seconds
         self.give_up()
 
     def collect(self, screenshot: np.ndarray):
@@ -45,9 +53,16 @@ class RewardTracker:
             return True
         if self._deadline is None:
             self._deadline = time.monotonic() + self._watch_seconds
-        if time.monotonic() < self._deadline:
-            self.collect(screenshot)
-        if not self.read_complete and time.monotonic() < self._deadline:
+        self.collect(screenshot)  # Also scan the frame that reaches the deadline, it may show the last tile
+        if self._tiles and self._first_tiles_at is None:
+            self._first_tiles_at = time.monotonic()
+            self._deadline = max(self._deadline, self._first_tiles_at + self._settle_seconds)
+        settled = (
+            self.read_complete
+            and self._first_tiles_at is not None
+            and time.monotonic() - self._first_tiles_at >= self._settle_seconds
+        )
+        if not settled and time.monotonic() < self._deadline:
             return False
         self._reading_finished = True
         if self.read_complete:
@@ -71,6 +86,7 @@ class RewardTracker:
         """Reset the result lifecycle while keeping cached image templates."""
         self._tiles = []
         self._deadline = None
+        self._first_tiles_at: float | None = None
         self._reading_finished = False
         self._run_confirmed = False
         self._reported = False
